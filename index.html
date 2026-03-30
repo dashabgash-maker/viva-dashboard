@@ -1241,45 +1241,41 @@
                 statusEl.innerHTML = 'Файл пуст или не содержит данных';
                 return;
             }
-            // Search first 10 rows for header with known column names
+            // Step 1: Find the header row — the one containing "Артикул"
             var dateCol = -1, artCol = -1, nameCol = -1, qtyCol = -1, revCol = -1, storeCol = -1, brandCol = -1;
             var headerRowIdx = -1;
-            for (var ri = 0; ri < Math.min(10, rows.length); ri++) {
+            for (var ri = 0; ri < Math.min(15, rows.length); ri++) {
                 var row = rows[ri];
                 if (!row) continue;
                 for (var c = 0; c < row.length; c++) {
                     var h = ('' + (row[c] || '')).toLowerCase().trim();
-                    if (h.indexOf('артикул') >= 0 && artCol < 0) artCol = c;
-                    if ((h === 'номенклатура' || h.indexOf('название') >= 0) && nameCol < 0) nameCol = c;
-                    if ((h.indexOf('магазин') >= 0) && storeCol < 0) storeCol = c;
-                    if ((h.indexOf('период') >= 0 || h.indexOf('дата') >= 0) && dateCol < 0) dateCol = c;
-                    if ((h.indexOf('дизайнер') >= 0 || h.indexOf('бренд') >= 0) && brandCol < 0) brandCol = c;
-                    if (h === 'продажа' || h === 'продажи') {
-                        // Next sub-row has Количество and Сумма at c and c+1
-                        qtyCol = c;
-                        revCol = c + 1;
-                    }
-                    if (h === 'количество' && qtyCol < 0) qtyCol = c;
-                    if (h === 'сумма' && revCol < 0) revCol = c;
+                    if (h.indexOf('артикул') >= 0) { headerRowIdx = ri; break; }
                 }
-                // Header row found when we have at least артикул
-                if (artCol >= 0 && headerRowIdx < 0) headerRowIdx = ri;
+                if (headerRowIdx >= 0) break;
             }
-            // If qty/rev not found from sub-header, look for "Продажа" column and use its index
-            // For the specific format: col 9 = qty, col 10 = rev after "Продажа" header
             if (headerRowIdx < 0) headerRowIdx = 0;
-            // Data starts after the header rows (skip sub-header too)
+            // Step 2: Extract columns ONLY from the header row
+            var hRow = rows[headerRowIdx] || [];
+            for (var c = 0; c < hRow.length; c++) {
+                var h = ('' + (hRow[c] || '')).toLowerCase().trim();
+                if (h.indexOf('артикул') >= 0 && artCol < 0) artCol = c;
+                if ((h === 'номенклатура' || h.indexOf('название') >= 0) && nameCol < 0) nameCol = c;
+                if (h.indexOf('магазин') >= 0 && storeCol < 0) storeCol = c;
+                if ((h === 'период' || h.indexOf('дата') >= 0) && dateCol < 0) dateCol = c;
+                if ((h.indexOf('дизайнер') >= 0 || h.indexOf('бренд') >= 0) && brandCol < 0) brandCol = c;
+                if (h === 'продажа' || h === 'продажи') { qtyCol = c; revCol = c + 1; }
+            }
+            // Step 3: Check for sub-header row (Количество/Сумма)
             var dataStart = headerRowIdx + 1;
-            // Check if row after header is also a sub-header (Количество/Сумма)
             if (dataStart < rows.length && rows[dataStart]) {
                 var subRow = rows[dataStart];
                 var hasSub = false;
                 for (var c = 0; c < subRow.length; c++) {
                     var sv = ('' + (subRow[c] || '')).toLowerCase().trim();
-                    if (sv === 'количество') { qtyCol = c; hasSub = true; }
-                    if (sv === 'сумма' && hasSub) { revCol = c; }
+                    if (sv === 'количество' && !hasSub) { qtyCol = c; hasSub = true; }
+                    if (sv === 'сумма' && hasSub) { revCol = c; hasSub = false; }
                 }
-                if (hasSub) dataStart++;
+                if (qtyCol >= 0) dataStart++;
             }
 
             var addedCount = 0;
