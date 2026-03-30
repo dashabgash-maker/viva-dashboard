@@ -1111,20 +1111,76 @@
         }
 
         /* ============ SHARED ============ */
+        var _activePhotoEl = null;
+
         function showImg(el, art) {
             var p = IMG[art];
             if (!p) return;
             var d = el.querySelector('.pht');
             if (!d) return;
             var CDN = 'https://static.insales-cdn.com/';
-            d.innerHTML = '<img src="' + CDN + p + '" width="150" height="150" style="display:block;border-radius:6px;object-fit:cover" onerror="this.parentNode.style.display=\'none\'">';
+            var isMobile = window.innerWidth <= 768;
+            var sz = isMobile ? 120 : 150;
+            d.innerHTML = '<img src="' + CDN + p + '" width="' + sz + '" height="' + sz + '" style="display:block;border-radius:6px;object-fit:cover" onerror="this.parentNode.style.display=\'none\'">';
             d.style.display = 'block';
+            if (isMobile) {
+                d.style.left = '50%';
+                d.style.transform = 'translateX(-50%)';
+                d.style.top = 'auto';
+                d.style.bottom = '80px';
+            } else {
+                d.style.left = '';
+                d.style.transform = '';
+                d.style.top = '';
+                d.style.bottom = '';
+            }
+            _activePhotoEl = el;
         }
 
         function hideImg(el) {
             var d = el.querySelector('.pht');
             if (d) d.style.display = 'none';
+            if (_activePhotoEl === el) _activePhotoEl = null;
         }
+
+        // Mobile touch support for photo preview
+        document.addEventListener('touchstart', function(e) {
+            var target = e.target;
+            // Find closest td with onmouseenter (photo cell)
+            var cell = null;
+            var node = target;
+            for (var i = 0; i < 5; i++) {
+                if (!node) break;
+                if (node.tagName === 'TD' && node.getAttribute('onmouseenter')) {
+                    cell = node;
+                    break;
+                }
+                node = node.parentElement;
+            }
+            // Hide any previously shown photo
+            if (_activePhotoEl && _activePhotoEl !== cell) {
+                hideImg(_activePhotoEl);
+            }
+            if (cell) {
+                var attr = cell.getAttribute('onmouseenter');
+                if (attr) {
+                    // Extract art from showImg(this,'XXX')
+                    var m = attr.match(/showImg\(this,'([^']+)'\)/);
+                    if (m) {
+                        e.preventDefault();
+                        showImg(cell, m[1]);
+                    }
+                }
+            }
+        }, {passive: false});
+
+        document.addEventListener('touchend', function(e) {
+            // Hide photo after a short delay so user can see it
+            if (_activePhotoEl) {
+                var el = _activePhotoEl;
+                setTimeout(function() { hideImg(el); }, 1500);
+            }
+        });
 
         function exportTab(tabIdx) {
             var wb = XLSX.utils.book_new();
@@ -1185,25 +1241,56 @@
                 statusEl.innerHTML = 'Файл пуст или не содержит данных';
                 return;
             }
-            // Try to find header row
-            var header = rows[0];
+            // Search first 10 rows for header with known column names
             var dateCol = -1, artCol = -1, nameCol = -1, qtyCol = -1, revCol = -1, storeCol = -1, brandCol = -1;
-            for (var c = 0; c < header.length; c++) {
-                var h = ('' + (header[c] || '')).toLowerCase();
-                if (h.indexOf('дата') >= 0 || h.indexOf('период') >= 0) dateCol = c;
-                if (h.indexOf('артикул') >= 0) artCol = c;
-                if (h.indexOf('номенклатура') >= 0 || h.indexOf('название') >= 0) nameCol = c;
-                if (h.indexOf('продажа') >= 0 && h.indexOf('кол') >= 0) qtyCol = c;
-                if (h.indexOf('продажа') >= 0 && h.indexOf('сумм') >= 0) revCol = c;
-                if (h.indexOf('магазин') >= 0) storeCol = c;
-                if (h.indexOf('бренд') >= 0 || h.indexOf('дизайнер') >= 0) brandCol = c;
+            var headerRowIdx = -1;
+            for (var ri = 0; ri < Math.min(10, rows.length); ri++) {
+                var row = rows[ri];
+                if (!row) continue;
+                for (var c = 0; c < row.length; c++) {
+                    var h = ('' + (row[c] || '')).toLowerCase().trim();
+                    if (h.indexOf('артикул') >= 0 && artCol < 0) artCol = c;
+                    if ((h === 'номенклатура' || h.indexOf('название') >= 0) && nameCol < 0) nameCol = c;
+                    if ((h.indexOf('магазин') >= 0) && storeCol < 0) storeCol = c;
+                    if ((h.indexOf('период') >= 0 || h.indexOf('дата') >= 0) && dateCol < 0) dateCol = c;
+                    if ((h.indexOf('дизайнер') >= 0 || h.indexOf('бренд') >= 0) && brandCol < 0) brandCol = c;
+                    if (h === 'продажа' || h === 'продажи') {
+                        // Next sub-row has Количество and Сумма at c and c+1
+                        qtyCol = c;
+                        revCol = c + 1;
+                    }
+                    if (h === 'количество' && qtyCol < 0) qtyCol = c;
+                    if (h === 'сумма' && revCol < 0) revCol = c;
+                }
+                // Header row found when we have at least артикул
+                if (artCol >= 0 && headerRowIdx < 0) headerRowIdx = ri;
             }
+            // If qty/rev not found from sub-header, look for "Продажа" column and use its index
+            // For the specific format: col 9 = qty, col 10 = rev after "Продажа" header
+            if (headerRowIdx < 0) headerRowIdx = 0;
+            // Data starts after the header rows (skip sub-header too)
+            var dataStart = headerRowIdx + 1;
+            // Check if row after header is also a sub-header (Количество/Сумма)
+            if (dataStart < rows.length && rows[dataStart]) {
+                var subRow = rows[dataStart];
+                var hasSub = false;
+                for (var c = 0; c < subRow.length; c++) {
+                    var sv = ('' + (subRow[c] || '')).toLowerCase().trim();
+                    if (sv === 'количество') { qtyCol = c; hasSub = true; }
+                    if (sv === 'сумма' && hasSub) { revCol = c; }
+                }
+                if (hasSub) dataStart++;
+            }
+
             var addedCount = 0;
             var addedDates = {};
             if (!D.daily_items) D.daily_items = {};
-            for (var r = 1; r < rows.length; r++) {
+            for (var r = dataStart; r < rows.length; r++) {
                 var row = rows[r];
                 if (!row || row.length < 3) continue;
+                // Skip rows without store (subtotals)
+                var storeVal = storeCol >= 0 ? ('' + (row[storeCol] || '')).trim() : '';
+                if (!storeVal) continue;
                 var dateVal = dateCol >= 0 ? row[dateCol] : null;
                 if (!dateVal) continue;
                 var ds = '';
@@ -1211,23 +1298,28 @@
                     var dt = new Date((dateVal - 25569) * 86400000);
                     ds = fmtDate(dt);
                 } else {
-                    var s = '' + dateVal;
+                    var s = ('' + dateVal).trim();
+                    // Handle "27.03.2026 11:58:28" format
                     if (s.indexOf('.') > 0) {
-                        var pts = s.split('.');
-                        ds = pts[2] + '-' + pts[1] + '-' + pts[0];
-                    } else {
+                        var datePart = s.split(' ')[0];
+                        var pts = datePart.split('.');
+                        if (pts.length === 3) {
+                            ds = pts[2] + '-' + pts[1] + '-' + pts[0];
+                        }
+                    } else if (s.length >= 10) {
                         ds = s.substring(0, 10);
                     }
                 }
+                if (!ds || ds.length < 10) continue;
                 var qty = qtyCol >= 0 ? (parseInt(row[qtyCol]) || 0) : 0;
                 var rev = revCol >= 0 ? (parseInt(row[revCol]) || 0) : 0;
                 if (qty === 0 && rev === 0) continue;
                 if (!D.daily_items[ds]) D.daily_items[ds] = [];
                 D.daily_items[ds].push({
-                    a: artCol >= 0 ? ('' + (row[artCol] || '')) : '',
-                    n: nameCol >= 0 ? ('' + (row[nameCol] || '')) : '',
-                    b: brandCol >= 0 ? ('' + (row[brandCol] || '')) : '',
-                    s: storeCol >= 0 ? ('' + (row[storeCol] || '')) : '',
+                    a: artCol >= 0 ? ('' + (row[artCol] || '')).trim() : '',
+                    n: nameCol >= 0 ? ('' + (row[nameCol] || '')).trim() : '',
+                    b: brandCol >= 0 ? ('' + (row[brandCol] || '')).trim() : '',
+                    s: storeVal,
                     q: qty,
                     r: rev
                 });
