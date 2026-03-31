@@ -1233,6 +1233,30 @@
             input.value = '';
         }
 
+        function parseDateStr(dateVal) {
+            if (!dateVal) return '';
+            if (typeof dateVal === 'number') {
+                var dt = new Date((dateVal - 25569) * 86400000);
+                return fmtDate(dt);
+            }
+            var s = ('' + dateVal).trim();
+            if (s.indexOf('.') > 0) {
+                var datePart = s.split(' ')[0];
+                var pts = datePart.split('.');
+                if (pts.length === 3) return pts[2] + '-' + pts[1] + '-' + pts[0];
+            }
+            if (s.length >= 10 && s[4] === '-') return s.substring(0, 10);
+            return '';
+        }
+
+        // Map store name aliases
+        function mapStoreName(s) {
+            if (!s) return '';
+            if (s.indexOf('НСК') >= 0 || s.indexOf('Новосиб') >= 0) return 'Новосибирск';
+            if (s.indexOf('Петроград') >= 0 || s.indexOf('СПБ') >= 0) return 'Петроградка';
+            return s;
+        }
+
         function processSalesUpload(rows, fileName) {
             var statusEl = document.getElementById('uploadStatus');
             if (rows.length < 2) {
@@ -1241,8 +1265,9 @@
                 statusEl.innerHTML = 'Файл пуст или не содержит данных';
                 return;
             }
-            // Step 1: Find the header row — the one containing "Артикул"
+            // Step 1: Find header row containing "Артикул"
             var dateCol = -1, artCol = -1, nameCol = -1, qtyCol = -1, revCol = -1, storeCol = -1, brandCol = -1;
+            var retQtyCol = -1, retRevCol = -1;
             var headerRowIdx = -1;
             for (var ri = 0; ri < Math.min(15, rows.length); ri++) {
                 var row = rows[ri];
@@ -1254,7 +1279,8 @@
                 if (headerRowIdx >= 0) break;
             }
             if (headerRowIdx < 0) headerRowIdx = 0;
-            // Step 2: Extract columns ONLY from the header row
+
+            // Step 2: Extract columns from header row
             var hRow = rows[headerRowIdx] || [];
             for (var c = 0; c < hRow.length; c++) {
                 var h = ('' + (hRow[c] || '')).toLowerCase().trim();
@@ -1263,19 +1289,49 @@
                 if (h.indexOf('магазин') >= 0 && storeCol < 0) storeCol = c;
                 if ((h === 'период' || h.indexOf('дата') >= 0) && dateCol < 0) dateCol = c;
                 if ((h.indexOf('дизайнер') >= 0 || h.indexOf('бренд') >= 0) && brandCol < 0) brandCol = c;
-                if (h === 'продажа' || h === 'продажи') { qtyCol = c; revCol = c + 1; }
+                // Sales columns: "Продажа", "Продажа, ед", "Продажа руб"
+                if (h.indexOf('продаж') >= 0) {
+                    if (h === 'продажа' || h === 'продажи') {
+                        qtyCol = c; revCol = c + 1;
+                    } else if ((h.indexOf('ед') >= 0 || h.indexOf('кол') >= 0) && qtyCol < 0) {
+                        qtyCol = c;
+                    } else if ((h.indexOf('руб') >= 0 || h.indexOf('сумм') >= 0) && revCol < 0) {
+                        revCol = c;
+                    }
+                }
+                // Return columns: "Возврат", "Возврат, ед", "Возврат, руб"
+                if (h.indexOf('возврат') >= 0) {
+                    if (h === 'возврат') {
+                        retQtyCol = c; retRevCol = c + 1;
+                    } else if ((h.indexOf('ед') >= 0 || h.indexOf('кол') >= 0) && retQtyCol < 0) {
+                        retQtyCol = c;
+                    } else if ((h.indexOf('руб') >= 0 || h.indexOf('сумм') >= 0) && retRevCol < 0) {
+                        retRevCol = c;
+                    }
+                }
             }
-            // Step 3: Check for sub-header row (Количество/Сумма)
+
+            // Step 3: Check sub-header row (Количество/Сумма for both sales and returns)
             var dataStart = headerRowIdx + 1;
             if (dataStart < rows.length && rows[dataStart]) {
                 var subRow = rows[dataStart];
-                var hasSub = false;
+                var subPairs = [];
                 for (var c = 0; c < subRow.length; c++) {
                     var sv = ('' + (subRow[c] || '')).toLowerCase().trim();
-                    if (sv === 'количество' && !hasSub) { qtyCol = c; hasSub = true; }
-                    if (sv === 'сумма' && hasSub) { revCol = c; hasSub = false; }
+                    if (sv === 'количество' || sv === 'сумма') subPairs.push({c: c, t: sv});
                 }
-                if (qtyCol >= 0) dataStart++;
+                if (subPairs.length >= 2) {
+                    // First pair = sales qty/rev, second pair = returns qty/rev
+                    qtyCol = subPairs[0].c;
+                    revCol = subPairs[1].c;
+                    if (subPairs.length >= 4) {
+                        retQtyCol = subPairs[2].c;
+                        retRevCol = subPairs[3].c;
+                    } else if (subPairs.length >= 3) {
+                        retQtyCol = subPairs[2].c;
+                    }
+                    dataStart++;
+                }
             }
 
             var addedCount = 0;
@@ -1284,31 +1340,17 @@
             for (var r = dataStart; r < rows.length; r++) {
                 var row = rows[r];
                 if (!row || row.length < 3) continue;
-                // Skip rows without store (subtotals)
-                var storeVal = storeCol >= 0 ? ('' + (row[storeCol] || '')).trim() : '';
+                // Skip rows without a store (subtotals)
+                var storeVal = storeCol >= 0 ? mapStoreName(('' + (row[storeCol] || '')).trim()) : '';
                 if (!storeVal) continue;
-                var dateVal = dateCol >= 0 ? row[dateCol] : null;
-                if (!dateVal) continue;
-                var ds = '';
-                if (typeof dateVal === 'number') {
-                    var dt = new Date((dateVal - 25569) * 86400000);
-                    ds = fmtDate(dt);
-                } else {
-                    var s = ('' + dateVal).trim();
-                    // Handle "27.03.2026 11:58:28" format
-                    if (s.indexOf('.') > 0) {
-                        var datePart = s.split(' ')[0];
-                        var pts = datePart.split('.');
-                        if (pts.length === 3) {
-                            ds = pts[2] + '-' + pts[1] + '-' + pts[0];
-                        }
-                    } else if (s.length >= 10) {
-                        ds = s.substring(0, 10);
-                    }
-                }
+                var ds = parseDateStr(dateCol >= 0 ? row[dateCol] : null);
                 if (!ds || ds.length < 10) continue;
-                var qty = qtyCol >= 0 ? (parseInt(row[qtyCol]) || 0) : 0;
-                var rev = revCol >= 0 ? (parseInt(row[revCol]) || 0) : 0;
+                var saleQty = qtyCol >= 0 ? (parseInt(row[qtyCol]) || 0) : 0;
+                var saleRev = revCol >= 0 ? (parseInt(row[revCol]) || 0) : 0;
+                var retQty = retQtyCol >= 0 ? (parseInt(row[retQtyCol]) || 0) : 0;
+                var retRev = retRevCol >= 0 ? (parseInt(row[retRevCol]) || 0) : 0;
+                var qty = saleQty - retQty;
+                var rev = saleRev - retRev;
                 if (qty === 0 && rev === 0) continue;
                 if (!D.daily_items[ds]) D.daily_items[ds] = [];
                 D.daily_items[ds].push({
@@ -1322,13 +1364,82 @@
                 addedCount++;
                 addedDates[ds] = true;
             }
-            var dateKeys = Object.keys(addedDates);
+
+            // Recalculate daily aggregates for the new dates
+            var dateKeys = Object.keys(addedDates).sort();
+            if (!D.daily) D.daily = {};
+            if (!D.daily_store) D.daily_store = {};
+            for (var di = 0; di < dateKeys.length; di++) {
+                var dk = dateKeys[di];
+                var dayItems = D.daily_items[dk] || [];
+                var dayTotal = {qty: 0, rev: 0};
+                var dayStores = {};
+                for (var ii = 0; ii < dayItems.length; ii++) {
+                    dayTotal.qty += dayItems[ii].q;
+                    dayTotal.rev += dayItems[ii].r;
+                    var sn = dayItems[ii].s;
+                    if (!dayStores[sn]) dayStores[sn] = {qty: 0, rev: 0};
+                    dayStores[sn].qty += dayItems[ii].q;
+                    dayStores[sn].rev += dayItems[ii].r;
+                }
+                D.daily[dk] = dayTotal;
+                D.daily_store[dk] = dayStores;
+            }
+
+            // Update weekly_iso totals
+            if (!D.weekly_iso) D.weekly_iso = {totals: {}};
+            if (!D.weekly_iso.totals) D.weekly_iso.totals = {};
+            for (var di = 0; di < dateKeys.length; di++) {
+                var dk = dateKeys[di];
+                var dParts = dk.split('-');
+                var dd = new Date(Date.UTC(parseInt(dParts[0]), parseInt(dParts[1])-1, parseInt(dParts[2])));
+                dd.setUTCDate(dd.getUTCDate() + 4 - (dd.getUTCDay() || 7));
+                var ys = new Date(Date.UTC(dd.getUTCFullYear(), 0, 1));
+                var wn = Math.ceil((((dd - ys) / 86400000) + 1) / 7);
+                var wk = dd.getUTCFullYear() + '-W' + (wn < 10 ? '0' + wn : '' + wn);
+                if (!D.weekly_iso.totals[wk]) D.weekly_iso.totals[wk] = {q: 0, r: 0};
+                D.weekly_iso.totals[wk].q += D.daily[dk].qty;
+                D.weekly_iso.totals[wk].r += D.daily[dk].rev;
+            }
+
+            // Update month totals
+            for (var di = 0; di < dateKeys.length; di++) {
+                var dk = dateKeys[di];
+                var ym = dk.substring(0, 7);
+                var midx = D.month_labels.indexOf(ym);
+                if (midx < 0) {
+                    D.month_labels.push(ym);
+                    D.month_qty.push(0);
+                    D.month_rev.push(0);
+                    midx = D.month_labels.length - 1;
+                }
+                D.month_qty[midx] += D.daily[dk].qty;
+                D.month_rev[midx] += D.daily[dk].rev;
+                // Update monthly_store
+                var stores = Object.keys(D.daily_store[dk] || {});
+                for (var si = 0; si < stores.length; si++) {
+                    var sn = stores[si];
+                    if (!D.monthly_store[sn]) {
+                        D.monthly_store[sn] = [];
+                        for (var fi = 0; fi < D.month_labels.length; fi++) D.monthly_store[sn].push(0);
+                    }
+                    while (D.monthly_store[sn].length <= midx) D.monthly_store[sn].push(0);
+                    D.monthly_store[sn][midx] += D.daily_store[dk][sn].qty;
+                }
+            }
+
             statusEl.style.background = '#d4edda';
             statusEl.style.color = '#155724';
-            statusEl.innerHTML = 'Загружено из ' + fileName + ': ' + addedCount + ' записей за ' + dateKeys.length + ' дат. Данные добавлены в раздел продаж.';
-            // Reset inited flags so tabs re-render
+            statusEl.innerHTML = 'Загружено из ' + fileName + ': <strong>' + addedCount + ' записей</strong> за ' + dateKeys.length + ' дат (' + dateKeys[0] + ' — ' + dateKeys[dateKeys.length-1] + '). Все данные обновлены.';
+            // Reset inited flags so tabs re-render with new data
             salesInited = false;
             cmpInited = false;
+            if (document.querySelector('.tab-btn.active')) {
+                var activeIdx = -1;
+                var btns = document.querySelectorAll('.tab-btn');
+                for (var bi = 0; bi < btns.length; bi++) { if (btns[bi].classList.contains('active')) { activeIdx = bi; break; } }
+                if (activeIdx >= 0) switchTab(activeIdx);
+            }
         }
 
         function processInventoryUpload(rows, fileName) {
@@ -1339,42 +1450,133 @@
                 statusEl.innerHTML = 'Файл пуст или не содержит данных';
                 return;
             }
-            var header = rows[0];
-            var artCol = -1, nameCol = -1, brandCol = -1;
+            // Find header row containing "Артикул"
+            var headerRowIdx = -1;
+            for (var ri = 0; ri < Math.min(10, rows.length); ri++) {
+                var row = rows[ri];
+                if (!row) continue;
+                for (var c = 0; c < row.length; c++) {
+                    var h = ('' + (row[c] || '')).toLowerCase().trim();
+                    if (h.indexOf('артикул') >= 0) { headerRowIdx = ri; break; }
+                }
+                if (headerRowIdx >= 0) break;
+            }
+            if (headerRowIdx < 0) headerRowIdx = 0;
+            var header = rows[headerRowIdx];
+            var artCol = -1, nameCol = -1, brandCol = -1, totalCol = -1;
             var storeCols = {};
             var storeNames = D.current_stores || [];
+            // Also add aliases
+            var storeAliases = {'нск': 'Новосибирск', 'новосиб': 'Новосибирск'};
             for (var c = 0; c < header.length; c++) {
-                var h = ('' + (header[c] || '')).toLowerCase();
-                if (h.indexOf('артикул') >= 0) artCol = c;
-                if (h.indexOf('номенклатура') >= 0 || h.indexOf('название') >= 0) nameCol = c;
-                if (h.indexOf('бренд') >= 0) brandCol = c;
-                if (h.indexOf('итого') >= 0) storeCols['total'] = c;
+                var h = ('' + (header[c] || '')).toLowerCase().trim();
+                if (h.indexOf('артикул') >= 0 && artCol < 0) artCol = c;
+                if ((h === 'номенклатура' || h.indexOf('название') >= 0) && nameCol < 0) nameCol = c;
+                if ((h.indexOf('бренд') >= 0 || h.indexOf('дизайнер') >= 0) && brandCol < 0) brandCol = c;
+                if (h.indexOf('итого') >= 0) totalCol = c;
                 for (var si = 0; si < storeNames.length; si++) {
-                    if (h.indexOf(storeNames[si].toLowerCase()) >= 0) {
+                    if (h === storeNames[si].toLowerCase() || h.indexOf(storeNames[si].toLowerCase()) >= 0) {
                         storeCols[storeNames[si]] = c;
                     }
                 }
+                // Check aliases
+                var aliasKeys = Object.keys(storeAliases);
+                for (var ai = 0; ai < aliasKeys.length; ai++) {
+                    if (h.indexOf(aliasKeys[ai]) >= 0) storeCols[storeAliases[aliasKeys[ai]]] = c;
+                }
             }
+
             var updatedCount = 0;
-            for (var r = 1; r < rows.length; r++) {
+            var newCount = 0;
+            // Build a quick index of existing products by art
+            var prodIndex = {};
+            for (var pi = 0; pi < D.products.length; pi++) {
+                prodIndex[D.products[pi].art] = pi;
+            }
+
+            for (var r = headerRowIdx + 1; r < rows.length; r++) {
                 var row = rows[r];
                 if (!row || row.length < 2) continue;
-                var art = artCol >= 0 ? ('' + (row[artCol] || '')) : '';
+                var art = artCol >= 0 ? ('' + (row[artCol] || '')).trim() : '';
                 if (!art) continue;
-                // Find product in D.products and update stock
-                for (var pi = 0; pi < D.products.length; pi++) {
-                    if (D.products[pi].art === art) {
-                        if (storeCols['total'] !== undefined) {
-                            D.products[pi].stock = parseInt(row[storeCols['total']]) || 0;
-                        }
-                        updatedCount++;
-                        break;
+                var totalStock = totalCol >= 0 ? (parseInt(row[totalCol]) || 0) : 0;
+                if (prodIndex[art] !== undefined) {
+                    var pi = prodIndex[art];
+                    D.products[pi].stock = totalStock;
+                    if (brandCol >= 0) D.products[pi].brand = ('' + (row[brandCol] || '')).trim() || D.products[pi].brand;
+                    updatedCount++;
+                } else {
+                    // Add new product
+                    D.products.push({
+                        art: art,
+                        name: nameCol >= 0 ? ('' + (row[nameCol] || '')).trim() : art,
+                        cat: '',
+                        brand: brandCol >= 0 ? ('' + (row[brandCol] || '')).trim() : '',
+                        stock: totalStock,
+                        speed: 0, turn: 0, qty30: 0, qty90: 0
+                    });
+                    prodIndex[art] = D.products.length - 1;
+                    newCount++;
+                }
+            }
+
+            // Recalculate cat_metrics and store_metrics stock from products
+            for (var ci = 0; ci < D.cat_metrics.length; ci++) {
+                D.cat_metrics[ci].stock = 0;
+            }
+            for (var pi = 0; pi < D.products.length; pi++) {
+                var p = D.products[pi];
+                for (var ci = 0; ci < D.cat_metrics.length; ci++) {
+                    if (D.cat_metrics[ci].cat === p.cat) {
+                        D.cat_metrics[ci].stock += p.stock || 0;
                     }
                 }
             }
+
+            // Rebuild dead_stock per store from inventory
+            if (D.dead_stock) {
+                var sKeys = Object.keys(storeCols);
+                for (var si = 0; si < sKeys.length; si++) {
+                    var sName = sKeys[si];
+                    var sc = storeCols[sName];
+                    var deadItems = [];
+                    for (var r = headerRowIdx + 1; r < rows.length; r++) {
+                        var row = rows[r];
+                        if (!row) continue;
+                        var art = artCol >= 0 ? ('' + (row[artCol] || '')).trim() : '';
+                        if (!art) continue;
+                        var storeStock = parseInt(row[sc]) || 0;
+                        if (storeStock > 0) {
+                            // Check if it has zero sales (simple heuristic: check if in products with qty30=0)
+                            var pidx = prodIndex[art];
+                            if (pidx !== undefined && (D.products[pidx].qty30 || 0) === 0) {
+                                deadItems.push({
+                                    art: art,
+                                    name: nameCol >= 0 ? ('' + (row[nameCol] || '')).trim() : art,
+                                    cat: pidx !== undefined ? (D.products[pidx].cat || '') : '',
+                                    brand: brandCol >= 0 ? ('' + (row[brandCol] || '')).trim() : '',
+                                    stock: storeStock
+                                });
+                            }
+                        }
+                    }
+                    if (deadItems.length > 0) D.dead_stock[sName] = deadItems;
+                }
+            }
+
             statusEl.style.background = '#d4edda';
             statusEl.style.color = '#155724';
-            statusEl.innerHTML = 'Загружено из ' + fileName + ': обновлено ' + updatedCount + ' товаров. Остатки обновлены.';
+            var msg = 'Загружено из ' + fileName + ': <strong>обновлено ' + updatedCount + ' товаров</strong>';
+            if (newCount > 0) msg += ', добавлено ' + newCount + ' новых';
+            msg += '. Остатки и мёртвый сток обновлены.';
+            statusEl.innerHTML = msg;
+            // Refresh current tab
+            if (document.querySelector('.tab-btn.active')) {
+                var activeIdx = -1;
+                var btns = document.querySelectorAll('.tab-btn');
+                for (var bi = 0; bi < btns.length; bi++) { if (btns[bi].classList.contains('active')) { activeIdx = bi; break; } }
+                if (activeIdx >= 0) switchTab(activeIdx);
+            }
         }
 
         // Drag and drop
