@@ -1334,13 +1334,13 @@
                 }
             }
 
+            // Collect new items, grouped by date
+            var newByDate = {};
             var addedCount = 0;
-            var addedDates = {};
             if (!D.daily_items) D.daily_items = {};
             for (var r = dataStart; r < rows.length; r++) {
                 var row = rows[r];
                 if (!row || row.length < 3) continue;
-                // Skip rows without a store (subtotals)
                 var storeVal = storeCol >= 0 ? mapStoreName(('' + (row[storeCol] || '')).trim()) : '';
                 if (!storeVal) continue;
                 var ds = parseDateStr(dateCol >= 0 ? row[dateCol] : null);
@@ -1352,8 +1352,8 @@
                 var qty = saleQty - retQty;
                 var rev = saleRev - retRev;
                 if (qty === 0 && rev === 0) continue;
-                if (!D.daily_items[ds]) D.daily_items[ds] = [];
-                D.daily_items[ds].push({
+                if (!newByDate[ds]) newByDate[ds] = [];
+                newByDate[ds].push({
                     a: artCol >= 0 ? ('' + (row[artCol] || '')).trim() : '',
                     n: nameCol >= 0 ? ('' + (row[nameCol] || '')).trim() : '',
                     b: brandCol >= 0 ? ('' + (row[brandCol] || '')).trim() : '',
@@ -1362,16 +1362,21 @@
                     r: rev
                 });
                 addedCount++;
-                addedDates[ds] = true;
             }
 
-            // Recalculate daily aggregates for the new dates
-            var dateKeys = Object.keys(addedDates).sort();
+            // REPLACE daily_items for uploaded dates (avoid double-counting)
+            var uploadedDates = Object.keys(newByDate).sort();
+            for (var di = 0; di < uploadedDates.length; di++) {
+                D.daily_items[uploadedDates[di]] = newByDate[uploadedDates[di]];
+            }
+
+            // Recalculate ALL daily aggregates from daily_items
             if (!D.daily) D.daily = {};
             if (!D.daily_store) D.daily_store = {};
-            for (var di = 0; di < dateKeys.length; di++) {
-                var dk = dateKeys[di];
-                var dayItems = D.daily_items[dk] || [];
+            var allDates = Object.keys(D.daily_items).sort();
+            for (var di = 0; di < allDates.length; di++) {
+                var dk = allDates[di];
+                var dayItems = D.daily_items[dk];
                 var dayTotal = {qty: 0, rev: 0};
                 var dayStores = {};
                 for (var ii = 0; ii < dayItems.length; ii++) {
@@ -1386,26 +1391,46 @@
                 D.daily_store[dk] = dayStores;
             }
 
-            // Update weekly_iso totals
-            if (!D.weekly_iso) D.weekly_iso = {totals: {}};
-            if (!D.weekly_iso.totals) D.weekly_iso.totals = {};
-            for (var di = 0; di < dateKeys.length; di++) {
-                var dk = dateKeys[di];
-                var dParts = dk.split('-');
+            // Recalculate weekly_iso from ALL daily data (not just uploaded dates)
+            function dateToISOWeek(dateStr) {
+                var dParts = dateStr.split('-');
                 var dd = new Date(Date.UTC(parseInt(dParts[0]), parseInt(dParts[1])-1, parseInt(dParts[2])));
                 dd.setUTCDate(dd.getUTCDate() + 4 - (dd.getUTCDay() || 7));
                 var ys = new Date(Date.UTC(dd.getUTCFullYear(), 0, 1));
                 var wn = Math.ceil((((dd - ys) / 86400000) + 1) / 7);
-                var wk = dd.getUTCFullYear() + '-W' + (wn < 10 ? '0' + wn : '' + wn);
-                if (!D.weekly_iso.totals[wk]) D.weekly_iso.totals[wk] = {q: 0, r: 0};
-                D.weekly_iso.totals[wk].q += D.daily[dk].qty;
-                D.weekly_iso.totals[wk].r += D.daily[dk].rev;
+                return dd.getUTCFullYear() + '-W' + (wn < 10 ? '0' + wn : '' + wn);
+            }
+            // Find which weeks are affected by uploaded dates
+            var affectedWeeks = {};
+            for (var di = 0; di < uploadedDates.length; di++) {
+                affectedWeeks[dateToISOWeek(uploadedDates[di])] = true;
+            }
+            // Zero out affected weeks and recalculate from all daily data
+            if (!D.weekly_iso) D.weekly_iso = {totals: {}};
+            if (!D.weekly_iso.totals) D.weekly_iso.totals = {};
+            var awKeys = Object.keys(affectedWeeks);
+            for (var wi = 0; wi < awKeys.length; wi++) {
+                D.weekly_iso.totals[awKeys[wi]] = {q: 0, r: 0};
+            }
+            // Sum ALL daily data for affected weeks
+            var allDailyDates = Object.keys(D.daily).sort();
+            for (var di = 0; di < allDailyDates.length; di++) {
+                var dk = allDailyDates[di];
+                var wk = dateToISOWeek(dk);
+                if (affectedWeeks[wk]) {
+                    D.weekly_iso.totals[wk].q += D.daily[dk].qty || 0;
+                    D.weekly_iso.totals[wk].r += D.daily[dk].rev || 0;
+                }
             }
 
-            // Update month totals
-            for (var di = 0; di < dateKeys.length; di++) {
-                var dk = dateKeys[di];
-                var ym = dk.substring(0, 7);
+            // Recalculate month totals for affected months
+            var affectedMonths = {};
+            for (var di = 0; di < uploadedDates.length; di++) {
+                affectedMonths[uploadedDates[di].substring(0, 7)] = true;
+            }
+            var amKeys = Object.keys(affectedMonths);
+            for (var mi = 0; mi < amKeys.length; mi++) {
+                var ym = amKeys[mi];
                 var midx = D.month_labels.indexOf(ym);
                 if (midx < 0) {
                     D.month_labels.push(ym);
@@ -1413,24 +1438,40 @@
                     D.month_rev.push(0);
                     midx = D.month_labels.length - 1;
                 }
-                D.month_qty[midx] += D.daily[dk].qty;
-                D.month_rev[midx] += D.daily[dk].rev;
-                // Update monthly_store
-                var stores = Object.keys(D.daily_store[dk] || {});
-                for (var si = 0; si < stores.length; si++) {
-                    var sn = stores[si];
+                // Zero out and recalculate
+                D.month_qty[midx] = 0;
+                D.month_rev[midx] = 0;
+                var storeKeys = Object.keys(D.monthly_store || {});
+                for (var si = 0; si < storeKeys.length; si++) {
+                    if (D.monthly_store[storeKeys[si]] && D.monthly_store[storeKeys[si]].length > midx) {
+                        D.monthly_store[storeKeys[si]][midx] = 0;
+                    }
+                }
+            }
+            // Sum ALL daily data for affected months
+            for (var di = 0; di < allDailyDates.length; di++) {
+                var dk = allDailyDates[di];
+                var ym = dk.substring(0, 7);
+                if (!affectedMonths[ym]) continue;
+                var midx = D.month_labels.indexOf(ym);
+                D.month_qty[midx] += D.daily[dk].qty || 0;
+                D.month_rev[midx] += D.daily[dk].rev || 0;
+                var dsStores = Object.keys(D.daily_store[dk] || {});
+                for (var si = 0; si < dsStores.length; si++) {
+                    var sn = dsStores[si];
                     if (!D.monthly_store[sn]) {
                         D.monthly_store[sn] = [];
                         for (var fi = 0; fi < D.month_labels.length; fi++) D.monthly_store[sn].push(0);
                     }
                     while (D.monthly_store[sn].length <= midx) D.monthly_store[sn].push(0);
-                    D.monthly_store[sn][midx] += D.daily_store[dk][sn].qty;
+                    D.monthly_store[sn][midx] += D.daily_store[dk][sn].qty || 0;
                 }
             }
 
             statusEl.style.background = '#d4edda';
             statusEl.style.color = '#155724';
-            statusEl.innerHTML = 'Загружено из ' + fileName + ': <strong>' + addedCount + ' записей</strong> за ' + dateKeys.length + ' дат (' + dateKeys[0] + ' — ' + dateKeys[dateKeys.length-1] + '). Все данные обновлены.';
+            var affWkList = Object.keys(affectedWeeks).sort().join(', ');
+            statusEl.innerHTML = 'Загружено из ' + fileName + ': <strong>' + addedCount + ' записей</strong> за ' + uploadedDates.length + ' дат (' + uploadedDates[0] + ' — ' + uploadedDates[uploadedDates.length-1] + '). Обновлены недели: ' + affWkList;
             // Reset inited flags so tabs re-render with new data
             salesInited = false;
             cmpInited = false;
