@@ -1732,38 +1732,40 @@
             btn.disabled = true;
             setTimeout(function() {
                 try {
-                    // Get the full page HTML
-                    var h = document.documentElement.outerHTML;
-                    // Serialize current data
+                    var scripts = document.querySelectorAll('script');
+                    var mainScript = null;
+                    for (var si = 0; si < scripts.length; si++) {
+                        if (scripts[si].textContent.indexOf('var D = ') >= 0) {
+                            mainScript = scripts[si];
+                            break;
+                        }
+                    }
+                    if (!mainScript) throw new Error('Script block not found');
+                    var src = mainScript.textContent;
+                    // Find 'var D = ' and replace up to ';\n        var IMG = '
+                    var dMarker = 'var D = ';
+                    var imgMarker = ';\n        var IMG = ';
+                    var dPos = src.indexOf(dMarker);
+                    var imgPos = src.indexOf(imgMarker, dPos);
+                    if (dPos < 0 || imgPos < 0) throw new Error('Data markers not found');
                     var dJson = JSON.stringify(D);
+                    var newSrc = src.substring(0, dPos) + dMarker + dJson;
+                    var afterD = src.substring(imgPos);
+                    // Now find end of IMG assignment in afterD
+                    var imgAssignStart = imgMarker.length;
+                    // IMG ends at ';\n' followed by next var/line
+                    var imgEndMarker = ';\n\n        var RU_MONTHS';
+                    var imgEndPos = afterD.indexOf(imgEndMarker);
+                    if (imgEndPos < 0) throw new Error('IMG end marker not found');
                     var imgJson = JSON.stringify(IMG);
-                    // Find and replace D assignment using indexOf + substring (reliable for large strings)
-                    var dMark = 'var D = ';
-                    var dStart = h.indexOf(dMark);
-                    if (dStart < 0) throw new Error('D marker not found');
-                    // Find end of D: look for ;\n followed by var IMG
-                    var imgMark = 'var IMG = ';
-                    var imgStart = h.indexOf(imgMark, dStart + dMark.length);
-                    if (imgStart < 0) throw new Error('IMG marker not found');
-                    // Find the semicolon+newline before IMG
-                    var dEndSearch = h.lastIndexOf(';', imgStart);
-                    if (dEndSearch < dStart) throw new Error('D end not found');
-                    // Find end of IMG: look for ;\n followed by var RU_MONTHS
-                    var ruMark = 'var RU_MONTHS';
-                    var ruStart = h.indexOf(ruMark, imgStart);
-                    if (ruStart < 0) throw new Error('RU marker not found');
-                    var imgEndSearch = h.lastIndexOf(';', ruStart);
-                    if (imgEndSearch < imgStart) throw new Error('IMG end not found');
-                    // Build new HTML by splicing
-                    var parts = [];
-                    parts.push('<!DOCTYPE html>\n<html>\n');
-                    parts.push(h.substring(0, dStart));
-                    parts.push(dMark + dJson);
-                    parts.push(h.substring(dEndSearch, imgStart));
-                    parts.push(imgMark + imgJson);
-                    parts.push(h.substring(imgEndSearch));
-                    parts.push('\n</html>');
-                    var blob = new Blob(parts, {type: 'text/html'});
+                    newSrc += ';\n        var IMG = ' + imgJson;
+                    newSrc += afterD.substring(imgEndPos);
+                    // Build full HTML
+                    var fullHtml = document.documentElement.outerHTML;
+                    var scOpen = '<' + 'script>';
+                    var scClose = '</' + 'script>';
+                    var output = fullHtml.replace(src, newSrc);
+                    var blob = new Blob(['<!DOCTYPE html>\n<html>\n' + output + '\n</html>'], {type: 'text/html'});
                     var url = URL.createObjectURL(blob);
                     var a = document.createElement('a');
                     a.href = url;
