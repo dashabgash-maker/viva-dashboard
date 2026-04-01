@@ -1518,7 +1518,7 @@
             for (var c = 0; c < header.length; c++) {
                 var h = ('' + (header[c] || '')).toLowerCase().trim();
                 if (h.indexOf('артикул') >= 0 && artCol < 0) artCol = c;
-                if ((h === 'номенклатура' || h.indexOf('название') >= 0) && nameCol < 0) nameCol = c;
+                if ((h === 'номенклатура' || h.indexOf('название') >= 0 || h === 'организация') && nameCol < 0) nameCol = c;
                 if ((h.indexOf('бренд') >= 0 || h.indexOf('дизайнер') >= 0) && brandCol < 0) brandCol = c;
                 if (h.indexOf('итого') >= 0) totalCol = c;
                 for (var si = 0; si < storeNames.length; si++) {
@@ -1550,25 +1550,61 @@
                 var totalStock = totalCol >= 0 ? (parseInt(row[totalCol]) || 0) : 0;
                 if (prodIndex[art] !== undefined) {
                     var pi = prodIndex[art];
+                    // REPLACE total stock (not add)
                     D.products[pi].stock = totalStock;
                     if (brandCol >= 0) D.products[pi].brand = ('' + (row[brandCol] || '')).trim() || D.products[pi].brand;
+                    // REPLACE per-store stock
+                    if (!D.products[pi].stores) D.products[pi].stores = {};
+                    var scKeys = Object.keys(storeCols);
+                    for (var sci = 0; sci < scKeys.length; sci++) {
+                        var sn = scKeys[sci];
+                        var stVal = parseInt(row[storeCols[sn]]) || 0;
+                        if (!D.products[pi].stores[sn]) {
+                            D.products[pi].stores[sn] = {stock: stVal, sales30: 0, turn: 0};
+                        } else {
+                            D.products[pi].stores[sn].stock = stVal;
+                        }
+                        // Recalculate turnover for this store
+                        var s30 = D.products[pi].stores[sn].sales30 || 0;
+                        D.products[pi].stores[sn].turn = s30 > 0 ? Math.round(stVal / (s30 / 30)) : 0;
+                    }
+                    // Recalculate total turnover
+                    var spd = D.products[pi].speed || 0;
+                    D.products[pi].turn = spd > 0 ? Math.round(totalStock / spd) : 0;
                     updatedCount++;
                 } else {
-                    // Add new product
-                    D.products.push({
+                    // Add new product (won't be shown in dead stock — no sales history)
+                    var rawName = nameCol >= 0 ? ('' + (row[nameCol] || '')).trim() : art;
+                    // Handle "Name, ART" format — extract just the name part
+                    if (rawName.indexOf(', ' + art) > 0) rawName = rawName.substring(0, rawName.indexOf(', ' + art)).trim();
+                    var newProd = {
                         art: art,
-                        name: nameCol >= 0 ? ('' + (row[nameCol] || '')).trim() : art,
+                        name: rawName || art,
                         cat: '',
                         brand: brandCol >= 0 ? ('' + (row[brandCol] || '')).trim() : '',
                         stock: totalStock,
-                        speed: 0, turn: 0, qty30: 0, qty90: 0
-                    });
+                        speed: 0, turn: 0, qty30: 0, qty90: 0,
+                        stores: {}
+                    };
+                    var scKeys2 = Object.keys(storeCols);
+                    for (var sci2 = 0; sci2 < scKeys2.length; sci2++) {
+                        var sn2 = scKeys2[sci2];
+                        newProd.stores[sn2] = {stock: parseInt(row[storeCols[sn2]]) || 0, sales30: 0, turn: 0};
+                    }
+                    D.products.push(newProd);
                     prodIndex[art] = D.products.length - 1;
                     newCount++;
                 }
             }
 
-            // Recalculate cat_metrics and store_metrics stock from products
+            // Recalculate total stock across all products
+            var newTotalStock = 0;
+            for (var pi = 0; pi < D.products.length; pi++) {
+                newTotalStock += D.products[pi].stock || 0;
+            }
+            if (D.overview) D.overview.total_stock = newTotalStock;
+
+            // Recalculate cat_metrics stock from products
             for (var ci = 0; ci < D.cat_metrics.length; ci++) {
                 D.cat_metrics[ci].stock = 0;
             }
@@ -1577,6 +1613,23 @@
                 for (var ci = 0; ci < D.cat_metrics.length; ci++) {
                     if (D.cat_metrics[ci].cat === p.cat) {
                         D.cat_metrics[ci].stock += p.stock || 0;
+                    }
+                }
+            }
+
+            // Recalculate store_metrics stock
+            if (D.store_metrics) {
+                for (var smi = 0; smi < D.store_metrics.length; smi++) {
+                    var sm = D.store_metrics[smi];
+                    var smName = sm.store;
+                    if (storeCols[smName] !== undefined) {
+                        var smStock = 0;
+                        for (var pi = 0; pi < D.products.length; pi++) {
+                            var ps = D.products[pi].stores;
+                            if (ps && ps[smName]) smStock += ps[smName].stock || 0;
+                        }
+                        sm.stock = smStock;
+                        sm.turn = sm.speed30 > 0 ? Math.round(smStock / sm.speed30) : 0;
                     }
                 }
             }
@@ -1701,7 +1754,7 @@
                     // Now find end of IMG assignment in afterD
                     var imgAssignStart = imgMarker.length;
                     // IMG ends at ';\n' followed by next var/line
-                    var imgEndMarker = ';\n        var RU_MONTHS';
+                    var imgEndMarker = ';\n\n        var RU_MONTHS';
                     var imgEndPos = afterD.indexOf(imgEndMarker);
                     if (imgEndPos < 0) throw new Error('IMG end marker not found');
                     var imgJson = JSON.stringify(IMG);
