@@ -1762,23 +1762,10 @@
                     newSrc += afterD.substring(imgEndPos);
                     // Build full HTML
                     var fullHtml = document.documentElement.outerHTML;
-                    var scriptStart = fullHtml.indexOf(src.substring(0, 60));
-                    if (scriptStart < 0) {
-                        // Fallback: rebuild from DOM
-                        var doctype = '<!DOCTYPE html>\n<html>\n<head>\n';
-                        var headEl = document.head.innerHTML;
-                        var bodyStart = fullHtml.indexOf('<body');
-                        var bodyTag = fullHtml.substring(bodyStart);
-                        // Replace script content
-                        var oldScriptOpen = '<script>' + src.substring(0, 40);
-                        var newScriptContent = '<script>' + newSrc + '</script>';
-                        var bodyNew = bodyTag.replace('<script>' + src + '</script>', newScriptContent);
-                        var output = doctype + headEl + '\n</head>\n' + bodyNew + '\n</html>';
-                        var blob = new Blob([output], {type: 'text/html'});
-                    } else {
-                        var output = fullHtml.replace(src, newSrc);
-                        var blob = new Blob(['<!DOCTYPE html>\n<html>\n' + output + '\n</html>'], {type: 'text/html'});
-                    }
+                    var scOpen = '<' + 'script>';
+                    var scClose = '</' + 'script>';
+                    var output = fullHtml.replace(src, newSrc);
+                    var blob = new Blob(['<!DOCTYPE html>\n<html>\n' + output + '\n</html>'], {type: 'text/html'});
                     var url = URL.createObjectURL(blob);
                     var a = document.createElement('a');
                     a.href = url;
