@@ -111,6 +111,10 @@
             </div>
         </div>
         <div id="uploadStatus" style="display:none;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-size:14px"></div>
+        <div id="savePanel" style="display:none;margin-bottom:16px;text-align:center">
+            <button id="saveBtn" onclick="saveDashboard()" style="background:#F7553D;color:#fff;border:none;padding:12px 32px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">Сохранить изменения</button>
+            <div style="font-size:12px;color:#888;margin-top:6px">Скачает обновлённый index.html — замените файл на GitHub</div>
+        </div>
 
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab(0)">Обзор</button>
@@ -1482,6 +1486,7 @@
                 for (var bi = 0; bi < btns.length; bi++) { if (btns[bi].classList.contains('active')) { activeIdx = bi; break; } }
                 if (activeIdx >= 0) switchTab(activeIdx);
             }
+            showSaveBtn();
         }
 
         function processInventoryUpload(rows, fileName) {
@@ -1641,6 +1646,7 @@
                 for (var bi = 0; bi < btns.length; bi++) { if (btns[bi].classList.contains('active')) { activeIdx = bi; break; } }
                 if (activeIdx >= 0) switchTab(activeIdx);
             }
+            showSaveBtn();
         }
 
         // Drag and drop
@@ -1659,6 +1665,94 @@
                 }
             });
         })();
+
+        var _dataChanged = false;
+
+        function showSaveBtn() {
+            _dataChanged = true;
+            document.getElementById('savePanel').style.display = 'block';
+        }
+
+        function saveDashboard() {
+            var btn = document.getElementById('saveBtn');
+            btn.textContent = 'Сохранение...';
+            btn.disabled = true;
+            setTimeout(function() {
+                try {
+                    var scripts = document.querySelectorAll('script');
+                    var mainScript = null;
+                    for (var si = 0; si < scripts.length; si++) {
+                        if (scripts[si].textContent.indexOf('var D = ') >= 0) {
+                            mainScript = scripts[si];
+                            break;
+                        }
+                    }
+                    if (!mainScript) throw new Error('Script block not found');
+                    var src = mainScript.textContent;
+                    // Find 'var D = ' and replace up to ';\n        var IMG = '
+                    var dMarker = 'var D = ';
+                    var imgMarker = ';\n        var IMG = ';
+                    var dPos = src.indexOf(dMarker);
+                    var imgPos = src.indexOf(imgMarker, dPos);
+                    if (dPos < 0 || imgPos < 0) throw new Error('Data markers not found');
+                    var dJson = JSON.stringify(D);
+                    var newSrc = src.substring(0, dPos) + dMarker + dJson;
+                    var afterD = src.substring(imgPos);
+                    // Now find end of IMG assignment in afterD
+                    var imgAssignStart = imgMarker.length;
+                    // IMG ends at ';\n' followed by next var/line
+                    var imgEndMarker = ';\n        var RU_MONTHS';
+                    var imgEndPos = afterD.indexOf(imgEndMarker);
+                    if (imgEndPos < 0) throw new Error('IMG end marker not found');
+                    var imgJson = JSON.stringify(IMG);
+                    newSrc += ';\n        var IMG = ' + imgJson;
+                    newSrc += afterD.substring(imgEndPos);
+                    // Build full HTML
+                    var fullHtml = document.documentElement.outerHTML;
+                    var scriptStart = fullHtml.indexOf(src.substring(0, 60));
+                    if (scriptStart < 0) {
+                        // Fallback: rebuild from DOM
+                        var doctype = '<!DOCTYPE html>\n<html>\n<head>\n';
+                        var headEl = document.head.innerHTML;
+                        var bodyStart = fullHtml.indexOf('<body');
+                        var bodyTag = fullHtml.substring(bodyStart);
+                        // Replace script content
+                        var oldScriptOpen = '<script>' + src.substring(0, 40);
+                        var newScriptContent = '<script>' + newSrc + '</script>';
+                        var bodyNew = bodyTag.replace('<script>' + src + '</script>', newScriptContent);
+                        var output = doctype + headEl + '\n</head>\n' + bodyNew + '\n</html>';
+                        var blob = new Blob([output], {type: 'text/html'});
+                    } else {
+                        var output = fullHtml.replace(src, newSrc);
+                        var blob = new Blob(['<!DOCTYPE html>\n<html>\n' + output + '\n</html>'], {type: 'text/html'});
+                    }
+                    var url = URL.createObjectURL(blob);
+                    var a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'index.html';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    btn.textContent = 'Сохранено!';
+                    btn.style.background = '#28a745';
+                    _dataChanged = false;
+                    setTimeout(function() {
+                        btn.textContent = 'Сохранить изменения';
+                        btn.style.background = '#F7553D';
+                        btn.disabled = false;
+                    }, 3000);
+                } catch(err) {
+                    btn.textContent = 'Ошибка: ' + err.message;
+                    btn.style.background = '#dc3545';
+                    setTimeout(function() {
+                        btn.textContent = 'Сохранить изменения';
+                        btn.style.background = '#F7553D';
+                        btn.disabled = false;
+                    }, 5000);
+                }
+            }, 100);
+        }
 
         document.addEventListener('DOMContentLoaded', function() { switchTab(0); });
     </script>
