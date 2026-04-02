@@ -124,6 +124,7 @@
             <button class="tab-btn" onclick="switchTab(4)">Товары</button>
             <button class="tab-btn" onclick="switchTab(5)">Товародвижение</button>
             <button class="tab-btn" onclick="switchTab(6)">Топы и мёртвый сток</button>
+            <button class="tab-btn" onclick="switchTab(7)" style="background:#fff3f0;border:2px solid #F7553D">&#128269; Поиск</button>
         </div>
 
         <!-- GLOBAL ARTICLE SEARCH PANEL -->
@@ -347,6 +348,43 @@
                 <table><thead><tr><th>Фото</th><th>Артикул</th><th>Название</th><th>Категория</th><th>Бренд</th><th>Остаток</th></tr></thead><tbody id="deadStockTable"></tbody></table>
             </div>
         </div>
+
+        <!-- TAB 7: Поиск по артикулу -->
+        <div class="tab-content" id="tab7">
+            <div style="background:#fff;border-radius:12px;padding:24px;box-shadow:0 2px 8px rgba(0,0,0,0.06)">
+                <h3 style="font-family:'Playfair Display',serif;font-style:italic;margin-bottom:16px;font-size:22px">Поиск по артикулу</h3>
+                <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
+                    <input type="text" id="searchTabInput" placeholder="Введите артикул (например VLV-CH, HJ-863)..." style="flex:1;min-width:200px;padding:12px 16px;border:2px solid #F7553D;border-radius:8px;font-size:15px;font-family:'DM Sans',sans-serif" onkeypress="if(event.key==='Enter')runArticleSearch()">
+                    <button onclick="runArticleSearch()" style="padding:12px 28px;background:#F7553D;color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:600;font-size:15px;font-family:'DM Sans',sans-serif">Найти</button>
+                </div>
+                <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
+                    <label style="font-weight:600;font-size:14px">Период:</label>
+                    <input type="date" id="searchDateFrom" style="padding:8px 12px;border:2px solid #F7553D;border-radius:8px;font-size:14px;font-family:'DM Sans',sans-serif">
+                    <span>—</span>
+                    <input type="date" id="searchDateTo" style="padding:8px 12px;border:2px solid #F7553D;border-radius:8px;font-size:14px;font-family:'DM Sans',sans-serif">
+                    <button onclick="setSearchPreset('7d')" style="padding:6px 14px;border:1px solid #ddd;border-radius:6px;background:#fff;cursor:pointer;font-size:13px">7 дней</button>
+                    <button onclick="setSearchPreset('30d')" style="padding:6px 14px;border:1px solid #ddd;border-radius:6px;background:#fff;cursor:pointer;font-size:13px">30 дней</button>
+                    <button onclick="setSearchPreset('90d')" style="padding:6px 14px;border:1px solid #ddd;border-radius:6px;background:#fff;cursor:pointer;font-size:13px">90 дней</button>
+                    <button onclick="setSearchPreset('all')" style="padding:6px 14px;border:1px solid #ddd;border-radius:6px;background:#fff;cursor:pointer;font-size:13px">Всё время</button>
+                </div>
+                <div id="searchResult" style="display:none">
+                    <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:24px">
+                        <div id="searchPhoto" style="flex:0 0 180px"></div>
+                        <div id="searchInfo" style="flex:1;min-width:260px"></div>
+                    </div>
+                    <div id="searchKpi" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:24px"></div>
+                    <div class="table-section">
+                        <h3>Продажи по дням</h3>
+                        <table><thead><tr><th>Дата</th><th>Магазин</th><th>Кол-во</th><th>Выручка</th></tr></thead><tbody id="searchDailyTable"></tbody></table>
+                    </div>
+                    <div class="table-section" style="margin-top:16px">
+                        <h3>По магазинам за период</h3>
+                        <table><thead><tr><th>Магазин</th><th>Кол-во</th><th>Выручка</th></tr></thead><tbody id="searchStoreTable"></tbody></table>
+                    </div>
+                </div>
+                <div id="searchEmpty" style="display:none;text-align:center;padding:40px 20px;color:#999;font-size:16px">Артикул не найден в данных о продажах. Попробуйте другой артикул.</div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -400,6 +438,7 @@
             if (idx === 4) initProductsTab();
             if (idx === 5) initMovementTab();
             if (idx === 6) initTopTab();
+            if (idx === 7) initSearchTab();
         }
 
         function initOverview() {
@@ -1099,6 +1138,19 @@
         }
 
         /* ============ GLOBAL ARTICLE SEARCH ============ */
+        function initSearchTab() {
+            // Set default dates if empty
+            var fromEl = document.getElementById('searchDateFrom');
+            var toEl = document.getElementById('searchDateTo');
+            if (!fromEl.value || !toEl.value) {
+                var to = new Date();
+                var from = new Date(to);
+                from.setDate(from.getDate() - 30);
+                fromEl.value = from.toISOString().split('T')[0];
+                toEl.value = to.toISOString().split('T')[0];
+            }
+        }
+
         var _currentArticleSearch = null;
 
         function searchArticle() {
@@ -1227,6 +1279,145 @@
             }
             document.getElementById('articleHistoryTable').innerHTML = historyHtml;
             document.getElementById('articleTotalSales').textContent = fmt(Math.round(totalRevenue)) + ' ₽ / ' + fmt(totalQty) + ' шт';
+        }
+
+        /* ============ TAB 7: SEARCH ============ */
+        function setSearchPreset(p) {
+            var to = new Date();
+            var from = new Date(to);
+            if (p === '7d') from.setDate(from.getDate() - 7);
+            else if (p === '30d') from.setDate(from.getDate() - 30);
+            else if (p === '90d') from.setDate(from.getDate() - 90);
+            else from = new Date('2024-01-01');
+            document.getElementById('searchDateFrom').value = from.toISOString().split('T')[0];
+            document.getElementById('searchDateTo').value = to.toISOString().split('T')[0];
+            runArticleSearch();
+        }
+
+        function runArticleSearch() {
+            var artInput = document.getElementById('searchTabInput').value.trim();
+            if (!artInput) return;
+            var artUp = artInput.toUpperCase();
+            var dateFrom = document.getElementById('searchDateFrom').value;
+            var dateTo = document.getElementById('searchDateTo').value;
+            if (!dateFrom || !dateTo) {
+                var to = new Date();
+                var from = new Date(to);
+                from.setDate(from.getDate() - 30);
+                dateFrom = from.toISOString().split('T')[0];
+                dateTo = to.toISOString().split('T')[0];
+                document.getElementById('searchDateFrom').value = dateFrom;
+                document.getElementById('searchDateTo').value = dateTo;
+            }
+            // Search in daily_items (all articles, not just D.products)
+            var dailyRows = [];
+            var byStore = {};
+            var totalQty = 0;
+            var totalRev = 0;
+            var daysWithSales = 0;
+            if (D.daily_items) {
+                var dates = Object.keys(D.daily_items).sort();
+                for (var di = 0; di < dates.length; di++) {
+                    var dk = dates[di];
+                    if (dk < dateFrom || dk > dateTo) continue;
+                    var items = D.daily_items[dk];
+                    var dayFound = false;
+                    for (var ii = 0; ii < items.length; ii++) {
+                        var it = items[ii];
+                        if (it.a.toUpperCase() === artUp) {
+                            dailyRows.push({date: dk, store: it.s || '', qty: it.q || 0, rev: it.r || 0, name: it.n || '', brand: it.b || ''});
+                            totalQty += it.q || 0;
+                            totalRev += it.r || 0;
+                            var sn = it.s || 'Неизвестно';
+                            if (!byStore[sn]) byStore[sn] = {q: 0, r: 0};
+                            byStore[sn].q += it.q || 0;
+                            byStore[sn].r += it.r || 0;
+                            dayFound = true;
+                        }
+                    }
+                    if (dayFound) daysWithSales++;
+                }
+            }
+            if (dailyRows.length === 0) {
+                document.getElementById('searchResult').style.display = 'none';
+                document.getElementById('searchEmpty').style.display = 'block';
+                return;
+            }
+            document.getElementById('searchEmpty').style.display = 'none';
+            document.getElementById('searchResult').style.display = 'block';
+            // Find product info if exists
+            var prod = null;
+            for (var pi = 0; pi < D.products.length; pi++) {
+                if (D.products[pi].art.toUpperCase() === artUp) { prod = D.products[pi]; break; }
+            }
+            var artName = prod ? prod.name : (dailyRows[0].name || artInput);
+            var artBrand = prod ? prod.brand : (dailyRows[0].brand || '');
+            var artCat = prod ? prod.cat : '';
+            var artStock = prod ? prod.stock : null;
+            // Photo
+            var photoHtml = '';
+            var CDN = 'https://static.insales-cdn.com/';
+            var realArt = prod ? prod.art : artInput;
+            if (IMG[realArt]) {
+                photoHtml = '<img src="' + CDN + IMG[realArt] + '" style="width:180px;height:180px;object-fit:cover;border-radius:10px" onerror="this.style.display=\'none\'">';
+            } else {
+                photoHtml = '<div style="width:180px;height:180px;background:#f5f5f5;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#ccc;font-size:14px">Нет фото</div>';
+            }
+            document.getElementById('searchPhoto').innerHTML = photoHtml;
+            // Info
+            var info = '';
+            info += '<div style="font-size:22px;font-weight:700;color:#333;margin-bottom:8px">' + artName + '</div>';
+            info += '<div style="font-size:15px;color:#888;margin-bottom:12px">Артикул: <strong style="color:#F7553D">' + realArt + '</strong></div>';
+            if (artCat) info += '<div style="font-size:14px;margin-bottom:4px">Категория: ' + artCat + '</div>';
+            if (artBrand) info += '<div style="font-size:14px;margin-bottom:4px">Бренд: ' + artBrand + '</div>';
+            if (artStock !== null) {
+                info += '<div style="font-size:14px;margin-bottom:4px">Остаток: <strong>' + fmt(artStock) + ' шт.</strong></div>';
+                if (prod && prod.stores) {
+                    info += '<div style="margin-top:8px;font-size:13px">';
+                    var stKeys = Object.keys(prod.stores);
+                    for (var si = 0; si < stKeys.length; si++) {
+                        var sv = prod.stores[stKeys[si]].stock || 0;
+                        if (sv > 0) info += '<span style="display:inline-block;margin-right:12px;margin-bottom:4px">' + stKeys[si] + ': <strong>' + sv + '</strong></span>';
+                    }
+                    info += '</div>';
+                }
+            }
+            document.getElementById('searchInfo').innerHTML = info;
+            // KPI cards
+            var periodDays = Math.max(1, Math.round((new Date(dateTo) - new Date(dateFrom)) / 86400000));
+            var speedPerDay = totalQty / periodDays;
+            var avgPrice = totalQty > 0 ? Math.round(totalRev / totalQty) : 0;
+            var daysLeft = (artStock !== null && speedPerDay > 0) ? Math.round(artStock / speedPerDay) : null;
+            var kpi = '';
+            kpi += '<div class="kpi-card"><h3>Продажи за период</h3><div class="value">' + fmt(totalQty) + ' шт.</div><div class="sub">' + fmt(Math.round(totalRev)) + ' &#8381;</div></div>';
+            kpi += '<div class="kpi-card"><h3>Скорость продаж</h3><div class="value">' + speedPerDay.toFixed(1) + ' шт/дн</div><div class="sub">' + fmt(Math.round(speedPerDay * 30)) + ' шт/мес</div></div>';
+            kpi += '<div class="kpi-card"><h3>Средняя цена</h3><div class="value">' + fmt(avgPrice) + ' &#8381;</div></div>';
+            kpi += '<div class="kpi-card"><h3>Дней с продажами</h3><div class="value">' + daysWithSales + ' из ' + periodDays + '</div></div>';
+            if (daysLeft !== null) {
+                kpi += '<div class="kpi-card"><h3>Хватит на</h3><div class="value">' + daysLeft + ' дней</div></div>';
+            }
+            if (artStock !== null) {
+                kpi += '<div class="kpi-card"><h3>Текущий остаток</h3><div class="value">' + fmt(artStock) + ' шт.</div></div>';
+            }
+            document.getElementById('searchKpi').innerHTML = kpi;
+            // Daily table (grouped by date, show store)
+            dailyRows.sort(function(a, b) { return a.date < b.date ? 1 : -1; });
+            var dHtml = '';
+            for (var ri = 0; ri < dailyRows.length; ri++) {
+                var rw = dailyRows[ri];
+                dHtml += '<tr><td>' + rw.date + '</td><td>' + rw.store + '</td><td>' + fmt(rw.qty) + '</td><td>' + fmt(Math.round(rw.rev)) + '</td></tr>';
+            }
+            dHtml += '<tr style="font-weight:700;background:#fef5f3"><td>ИТОГО</td><td></td><td>' + fmt(totalQty) + '</td><td>' + fmt(Math.round(totalRev)) + '</td></tr>';
+            document.getElementById('searchDailyTable').innerHTML = dHtml;
+            // Store table
+            var storeKeys = Object.keys(byStore).sort(function(a, b) { return byStore[b].q - byStore[a].q; });
+            var sHtml = '';
+            for (var si = 0; si < storeKeys.length; si++) {
+                var sk = storeKeys[si];
+                sHtml += '<tr><td>' + sk + '</td><td>' + fmt(byStore[sk].q) + '</td><td>' + fmt(Math.round(byStore[sk].r)) + '</td></tr>';
+            }
+            sHtml += '<tr style="font-weight:700;background:#fef5f3"><td>ИТОГО</td><td>' + fmt(totalQty) + '</td><td>' + fmt(Math.round(totalRev)) + '</td></tr>';
+            document.getElementById('searchStoreTable').innerHTML = sHtml;
         }
 
         function filterProductsBySearch() {
