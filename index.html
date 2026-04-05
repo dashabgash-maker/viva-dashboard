@@ -1231,7 +1231,6 @@
             var artStock = prod ? prod.stock : null;
             var lastSaleDate = ahEntry ? (ahEntry.ls || '') : '';
             var firstSaleDate = ahEntry ? (ahEntry.fs || '') : '';
-            var totalDaysWithSales = ahEntry ? (ahEntry.dws || daysWithSales) : daysWithSales;
             // Photo
             var photoHtml = '';
             var CDN = 'https://static.insales-cdn.com/';
@@ -1252,40 +1251,22 @@
             }
             if (artStock !== null) {
                 info += '<div style="font-size:16px;margin-top:12px;margin-bottom:4px;padding:10px 14px;background:#fef5f3;border-radius:8px;border:1px solid #F7553D33">Общий остаток: <strong style="color:#F7553D;font-size:20px">' + fmt(artStock) + ' шт.</strong></div>';
-                if (prod && prod.stores) {
-                    info += '<table style="width:100%;font-size:13px;border-collapse:collapse;margin-top:8px">';
-                    var stKeys = Object.keys(prod.stores);
-                    for (var si = 0; si < stKeys.length; si++) {
-                        var sv = prod.stores[stKeys[si]].stock || 0;
-                        info += '<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">' + stKeys[si] + '</td><td style="padding:4px 8px;text-align:right;border-bottom:1px solid #eee;font-weight:600">' + fmt(sv) + '</td></tr>';
-                    }
-                    info += '</table>';
-                }
             }
             document.getElementById('searchInfo').innerHTML = info;
-            // KPI cards - speed based on actual sales period (first to last sale)
+            // KPI cards - all metrics based on selected period
             var periodDays = Math.max(1, Math.round((new Date(dateTo) - new Date(dateFrom)) / 86400000));
-            // Calculate speed based on active sales period (first sale to last sale)
-            var activeDays = periodDays;
-            if (firstSaleDate && lastSaleDate) {
-                var fdMs = new Date(firstSaleDate).getTime();
-                var ldMs = new Date(lastSaleDate).getTime();
-                var dfMs = new Date(dateFrom).getTime();
-                var dtMs = new Date(dateTo).getTime();
-                var effectiveStart = Math.max(fdMs, dfMs);
-                var effectiveEnd = Math.min(ldMs, dtMs);
-                if (effectiveEnd > effectiveStart) {
-                    activeDays = Math.max(1, Math.round((effectiveEnd - effectiveStart) / 86400000));
-                }
-            }
-            var speedPerDay = totalQty / activeDays;
+            var speedPerDay = totalQty / periodDays;
             var avgPrice = totalQty > 0 ? Math.round(totalRev / totalQty) : 0;
             var daysLeft = (artStock !== null && speedPerDay > 0) ? Math.round(artStock / speedPerDay) : null;
+            // Days with sales for selected period only
+            var periodDaysWithSales = daysWithSales;
             var kpi = '';
             kpi += '<div class="kpi-card"><h3>Продажи за период</h3><div class="value">' + fmt(totalQty) + ' шт.</div><div class="sub">' + fmt(Math.round(totalRev)) + ' &#8381;</div></div>';
             kpi += '<div class="kpi-card"><h3>Скорость продаж</h3><div class="value">' + speedPerDay.toFixed(2) + ' шт/дн</div><div class="sub">' + fmt(Math.round(speedPerDay * 30)) + ' шт/мес</div></div>';
             kpi += '<div class="kpi-card"><h3>Средняя цена</h3><div class="value">' + fmt(avgPrice) + ' &#8381;</div></div>';
-            kpi += '<div class="kpi-card"><h3>Дней с продажами</h3><div class="value">' + totalDaysWithSales + ' из ' + periodDays + '</div></div>';
+            if (periodDaysWithSales > 0) {
+                kpi += '<div class="kpi-card"><h3>Дней с продажами</h3><div class="value">' + periodDaysWithSales + ' из ' + periodDays + '</div></div>';
+            }
             if (lastSaleDate) {
                 kpi += '<div class="kpi-card"><h3>Последняя продажа</h3><div class="value">' + lastSaleDate + '</div></div>';
             }
